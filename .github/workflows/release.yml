@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # Compile le jar unique (cross-platform) sur Linux
+  build-jar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Download Kotlin compiler
+        run: |
+          curl -sL -o kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q kotlinc.zip
+
+      - name: Build jar
+        run: kotlinc/bin/kotlinc src/*.kt -include-runtime -d CalculatriceFun.jar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jar
+          path: CalculatriceFun.jar
+
+  # Empaquette l'exécutable natif par OS (le jar embarque son propre JRE via jpackage)
+  package:
+    needs: build-jar
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: jar
+
+      - name: jpackage (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          jpackage --input . --name CalculatriceFun --main-jar CalculatriceFun.jar \
+            --main-class MainKt --type app-image --dest dist
+          cd dist && zip -r ../CalculatriceFun-linux-x64.zip CalculatriceFun
+
+      - name: jpackage (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          jpackage --input . --name CalculatriceFun --main-jar CalculatriceFun.jar `
+            --main-class MainKt --type app-image --dest dist
+          Compress-Archive -Path dist/CalculatriceFun -DestinationPath CalculatriceFun-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-package
+          path: CalculatriceFun-*.zip
+
+  # Rassemble tout et publie la Release GitHub
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Compute tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v-ci-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --title "CalculatriceFun $TAG" \
+            --notes "Executables with bundled JRE (no Java needed on the target machine).
+
+          - **CalculatriceFun-linux-x64.zip** : unzip and run \`CalculatriceFun/bin/CalculatriceFun\`
+          - **CalculatriceFun-windows-x64.zip** : unzip and run \`CalculatriceFun\CalculatriceFun.exe\`
+          - **CalculatriceFun.jar** : universal, requires Java 17+
+
+          Built by CI from commit ${GITHUB_SHA}." \
+            assets/*
