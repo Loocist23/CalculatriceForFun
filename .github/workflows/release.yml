@@ -49,18 +49,19 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: jar
+          path: app
 
       - name: jpackage (Linux)
         if: runner.os == 'Linux'
         run: |
-          jpackage --input . --name CalculatriceFun --main-jar CalculatriceFun.jar \
+          jpackage --input app --name CalculatriceFun --main-jar CalculatriceFun.jar \
             --main-class MainKt --type app-image --dest dist
           cd dist && zip -r ../CalculatriceFun-linux-x64.zip CalculatriceFun
 
       - name: jpackage (Windows)
         if: runner.os == 'Windows'
         run: |
-          jpackage --input . --name CalculatriceFun --main-jar CalculatriceFun.jar `
+          jpackage --input app --name CalculatriceFun --main-jar CalculatriceFun.jar `
             --main-class MainKt --type app-image --dest dist
           Compress-Archive -Path dist/CalculatriceFun -DestinationPath CalculatriceFun-windows-x64.zip
 
